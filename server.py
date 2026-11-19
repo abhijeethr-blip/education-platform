@@ -8,18 +8,27 @@ from urllib.parse import urlparse, parse_qs
 ROOT = Path(__file__).parent / 'web'
 
 
-def fetch_profiles(dsn, query='', limit=100):
+def fetch_profiles(dsn, query='', limit=100, offset=0):
     import psycopg
     from psycopg.rows import dict_row
     with psycopg.connect(dsn, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            cur.execute('''SELECT i.id,i.name,i.website,i.city,i.state,i.country,
-              COUNT(DISTINCT s.id)::integer AS source_count,
-              COUNT(DISTINCT f.id)::integer AS candidate_count
-              FROM edu.institutions i LEFT JOIN edu.source_pages s ON s.institution_id=i.id
-              LEFT JOIN edu.facts f ON f.institution_id=i.id
-              WHERE i.name ILIKE %s GROUP BY i.id ORDER BY i.name LIMIT %s''',
-              (f'%{query}%', min(max(int(limit),1),500)))
+            pattern = f'%{query}%'
+            cur.execute('''WITH matches AS (
+                SELECT id, name, state, city, country, website, attributes
+                FROM edu.institutions
+                WHERE name ILIKE %s OR state ILIKE %s OR city ILIKE %s
+                   OR attributes->>'institution_type' ILIKE %s
+                   OR attributes->>'specialization' ILIKE %s
+                ORDER BY name, id LIMIT %s OFFSET %s
+              )
+              SELECT i.id, i.name, COALESCE(i.website,i.attributes->>'aishe_website') AS website,
+                     i.state,i.city,i.country,
+                     i.attributes->>'institution_type' AS institution_type,
+                     (SELECT count(*)::integer FROM edu.source_pages s WHERE s.institution_id=i.id) AS source_count,
+                     (SELECT count(*)::integer FROM edu.facts f WHERE f.institution_id=i.id) AS candidate_count
+              FROM matches i ORDER BY i.name, i.id''',
+              (pattern, pattern, pattern, pattern, pattern, min(max(int(limit), 1), 500), offset))
             return cur.fetchall()
 
 
@@ -28,7 +37,7 @@ def fetch_profile(dsn, institution_id):
     from psycopg.rows import dict_row
     with psycopg.connect(dsn, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            cur.execute('SELECT id,name,website,city,state,country FROM edu.institutions WHERE id=%s', (institution_id,))
+            cur.execute("SELECT id,name,COALESCE(website,attributes->>'aishe_website') AS website,city,state,country FROM edu.institutions WHERE id=%s", (institution_id,))
             institution=cur.fetchone()
             if not institution: return None
             cur.execute('''SELECT f.field_key,f.field_value,f.review_status,s.url,s.fetched_at
@@ -44,7 +53,7 @@ def fetch_comparison(dsn, ids):
     if not ids:return []
     with psycopg.connect(dsn,row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            cur.execute('SELECT id,name,website,city,state,country FROM edu.institutions WHERE id=ANY(%s) ORDER BY name',(ids,))
+            cur.execute("SELECT id,name,COALESCE(website,attributes->>'aishe_website') AS website,city,state,country FROM edu.institutions WHERE id=ANY(%s) ORDER BY name",(ids,))
             institutions=cur.fetchall()
             cur.execute("""SELECT DISTINCT ON (f.institution_id,f.field_key) f.institution_id,f.field_key,f.field_value,s.url
                 FROM edu.facts f JOIN edu.source_pages s ON s.id=f.source_page_id
@@ -102,7 +111,16 @@ class Handler(SimpleHTTPRequestHandler):
                     result=review_candidates(dsn)
                 elif url.path=='/api/institutions':
                     params=parse_qs(url.query)
-                    result=fetch_profiles(dsn,params.get('q',[''])[0])
+                    raw_offset = params.get('offset', ['0'])[0]
+                    if not raw_offset.isascii() or not raw_offset.isdecimal() or len(raw_offset) > 7:
+                        return self.respond({'error': 'Invalid offset'}, 400)
+                    offset = int(raw_offset)
+                    query = params.get('q',[''])[0]
+                    result = fetch_profiles(dsn, query, 50, offset) if 'offset' in params else fetch_profiles(dsn, query)
+                elif url.path == '/api/directory/count':
+                    import psycopg
+                    with psycopg.connect(dsn) as conn:
+                        result = {'institutions': conn.execute('SELECT count(*) FROM edu.institutions').fetchone()[0]}
                 elif url.path.startswith('/api/institutions/'):
                     result=fetch_profile(dsn,int(url.path.rsplit('/',1)[-1]))
                     if result is None: return self.respond({'error':'Not found'},404)

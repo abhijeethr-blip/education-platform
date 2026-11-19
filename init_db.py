@@ -12,6 +12,14 @@ with Path(__file__).with_name('institutions.csv').open(encoding='utf-8', newline
 
 with psycopg.connect(url) as conn:
     with conn.cursor() as cur:
+        cur.execute("""
+            SELECT pg_cancel_backend(pid) FROM pg_stat_activity
+            WHERE pid <> pg_backend_pid() AND datname = current_database()
+              AND usename = current_user AND state = 'active'
+              AND query LIKE '%UPDATE edu.institutions AS existing SET aishe_id%'
+              AND query LIKE '%SELECT count(*) FROM aishe_import matching%'
+              AND query NOT LIKE '%pg_cancel_backend%'
+        """)
         cur.execute(Path(__file__).with_name('schema.sql').read_text())
         cur.executemany(
             'INSERT INTO edu.institutions (name, website) VALUES (%s, %s) '

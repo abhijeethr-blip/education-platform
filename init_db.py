@@ -56,7 +56,7 @@ with psycopg.connect(url) as conn:
             """)
             cur.execute("""
                 INSERT INTO edu.institutions (aishe_id, name, state, city, attributes)
-                SELECT aishe_id, name, state, district,
+                SELECT aishe_id, COALESCE(NULLIF(btrim(name), ''), 'Institution ' || aishe_id), state, district,
                        jsonb_strip_nulls(jsonb_build_object(
                            'aishe_website', website, 'category', category,
                            'institution_type', institution_type,

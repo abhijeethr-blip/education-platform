@@ -22,7 +22,7 @@ def fetch_profiles(dsn, query='', limit=100, offset=0):
                    OR attributes->>'specialization' ILIKE %s
                 ORDER BY name, id LIMIT %s OFFSET %s
               )
-              SELECT i.id, i.name, COALESCE(i.website,i.attributes->>'aishe_website') AS website,
+              SELECT i.id, i.name, i.website,
                      i.state,i.city,i.country,
                      i.attributes->>'institution_type' AS institution_type,
                      (SELECT count(*)::integer FROM edu.source_pages s WHERE s.institution_id=i.id) AS source_count,
@@ -37,7 +37,7 @@ def fetch_profile(dsn, institution_id):
     from psycopg.rows import dict_row
     with psycopg.connect(dsn, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,name,COALESCE(website,attributes->>'aishe_website') AS website,city,state,country FROM edu.institutions WHERE id=%s", (institution_id,))
+            cur.execute("SELECT id,name,website,city,state,country FROM edu.institutions WHERE id=%s", (institution_id,))
             institution=cur.fetchone()
             if not institution: return None
             cur.execute('''SELECT f.field_key,f.field_value,f.review_status,s.url,s.fetched_at
@@ -53,7 +53,7 @@ def fetch_comparison(dsn, ids):
     if not ids:return []
     with psycopg.connect(dsn,row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,name,COALESCE(website,attributes->>'aishe_website') AS website,city,state,country FROM edu.institutions WHERE id=ANY(%s) ORDER BY name",(ids,))
+            cur.execute("SELECT id,name,website,city,state,country FROM edu.institutions WHERE id=ANY(%s) ORDER BY name",(ids,))
             institutions=cur.fetchall()
             cur.execute("""SELECT DISTINCT ON (f.institution_id,f.field_key) f.institution_id,f.field_key,f.field_value,s.url
                 FROM edu.facts f JOIN edu.source_pages s ON s.id=f.source_page_id

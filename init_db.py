@@ -32,13 +32,17 @@ with psycopg.connect(url) as conn:
                     while chunk := dataset.read(256 * 1024):
                         copy.write(chunk)
             cur.execute("""
+                WITH distinct_sites AS (
+                    SELECT rtrim(website, '/') AS website, min(aishe_id) AS aishe_id
+                    FROM aishe_import
+                    WHERE website IS NOT NULL
+                    GROUP BY rtrim(website, '/')
+                    HAVING count(*) = 1
+                )
                 UPDATE edu.institutions AS existing SET aishe_id = incoming.aishe_id
-                FROM aishe_import AS incoming
+                FROM distinct_sites AS incoming
                 WHERE existing.aishe_id IS NULL AND existing.website IS NOT NULL
-                  AND incoming.website IS NOT NULL
-                  AND rtrim(existing.website, '/') = rtrim(incoming.website, '/')
-                  AND (SELECT count(*) FROM aishe_import matching
-                       WHERE matching.website = incoming.website) = 1
+                  AND rtrim(existing.website, '/') = incoming.website
                   AND NOT EXISTS (SELECT 1 FROM edu.institutions imported
                                   WHERE imported.aishe_id = incoming.aishe_id)
             """)

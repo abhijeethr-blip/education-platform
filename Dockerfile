@@ -8,4 +8,4 @@ COPY . ./
 RUN chown -R appuser:appuser /app
 USER appuser
 EXPOSE 8080
-CMD ["python", "server.py"]
+CMD ["sh", "-c", "if [ -n \"$DATABASE_URL\" ]; then python init_db.py || exit $?; fi; exec python server.py"]
